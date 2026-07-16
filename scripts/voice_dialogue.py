@@ -43,19 +43,19 @@ def parse_line(line: str) -> tuple[str, str]:
     return speaker.strip(), text
 
 
-def synthesize(voicelab: Path, text: str, voice: str, speed: float, out_path: Path) -> None:
+def synthesize(
+    voicelab: Path, text: str, voice: str, speed: float, out_path: Path, backend: str | None = None
+) -> None:
     """One voice-lab CLI call; writes a WAV at out_path."""
     python = voicelab / ".venv" / "Scripts" / "python.exe"
-    subprocess.run(
-        [
-            str(python), str(voicelab / "scripts" / "synthesize.py"),
-            "--text", text, "--voice", voice, "--speed", f"{speed:g}",
-            "--out", str(out_path),
-        ],
-        check=True,
-        cwd=str(voicelab),
-        capture_output=True,
-    )
+    command = [
+        str(python), str(voicelab / "scripts" / "synthesize.py"),
+        "--text", text, "--voice", voice, "--speed", f"{speed:g}",
+        "--out", str(out_path),
+    ]
+    if backend:
+        command += ["--backend", backend]
+    subprocess.run(command, check=True, cwd=str(voicelab), capture_output=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -63,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("board", type=Path, help="path to storyboard.json")
     parser.add_argument("--cast", action="append", default=[], metavar="Name=voice[:speed]", required=True)
+    parser.add_argument("--backend", default=None, help="voice-lab backend (e.g. kokoro, chatterbox)")
     parser.add_argument("--out", type=Path, default=None, help="wav dir (default: <board dir>/voice)")
     parser.add_argument("--voicelab", type=Path, default=VOICE_LAB)
     parser.add_argument("--force", action="store_true")
@@ -90,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             voice, speed = cast[speaker]
             try:
-                synthesize(args.voicelab, text, voice, speed, wav)
+                synthesize(args.voicelab, text, voice, speed, wav, args.backend)
                 made += 1
                 log.info("shot %d line %d: %s (%s) -> %s", shot["shot"], i, speaker, voice, wav.name)
             except subprocess.CalledProcessError as exc:
