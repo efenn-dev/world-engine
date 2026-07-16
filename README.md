@@ -50,6 +50,9 @@ python demos/rendezvous.py                       # social backend: agents find e
 python demos/rendezvous.py --minds llm           # each agent is an LLM via llm-router
 python demos/rendezvous.py --storyboard llm      # LLM-enriched shot prompts (Track 3)
 
+# render the board into key frames (needs sd-lab's A1111 on :7861)
+python scripts/render_storyboard.py runs/<ts>/storyboard.json
+
 python -m pytest tests -q                        # MuJoCo tests skip if mujoco missing
 ```
 
@@ -89,6 +92,7 @@ worldengine/
 assets/pendulum.xml   MJCF model for the MuJoCo demo (undamped point-mass pendulum)
 demos/pendulum_energy.py    physics hypothesis loop (--backend pendulum|mujoco)
 demos/rendezvous.py         social episode loop (--minds scripted|llm)
+scripts/render_storyboard.py  storyboard.json → frames/*.png + contact sheet (A1111 API)
 tests/                      event log · backend physics · MuJoCo · social · engine loop
 ```
 
@@ -139,5 +143,8 @@ tests/                      event log · backend physics · MuJoCo · social · 
    and a sheet only appears when that character is actually in the shot. Optional
    `LLMShotEnricher` rewrites prompts cinematically (facts pinned; template kept on any
    failure). Outputs `storyboard.json` (ready for an image pipeline: SDXL → ClipLab) and
-   `storyboard.md`. Next media step: feed storyboard.json to sd-lab for actual key
-   frames, then assemble in ClipLab.
+   `storyboard.md`. `scripts/render_storyboard.py` closes the loop: it feeds the board
+   to sd-lab's A1111 API (:7861) and drops deterministic frames (seed = base + shot) plus
+   a `frames/index.html` contact sheet next to the board. Known limit at SD1.5: two-person
+   shots can blend character features — per-character LoRAs / regional prompting is the
+   planned fix. Next media step: character LoRAs, then assemble frames + dialogue in ClipLab.
