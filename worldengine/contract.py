@@ -50,7 +50,8 @@ def validate_intent(
             raise IntentError(
                 f"duration must be a number in (0, {MAX_DURATION}] seconds, got {duration!r}"
             )
-        if world.get(sim_entity, "sim_config") is None:
+        # only configurable backends require a configure step before running
+        if integrators and world.get(sim_entity, "sim_config") is None:
             raise IntentError("no experiment configured yet; send a configure intent first")
     elif intent.action == "conclude":
         if not str(intent.args.get("summary", "")).strip():

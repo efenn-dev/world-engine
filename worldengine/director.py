@@ -34,6 +34,51 @@ class DirectorError(RuntimeError):
     """The director failed to produce a valid intent."""
 
 
+def llm_defaults(
+    base_url: str | None = None,
+    model: str | None = None,
+    route: str | None = None,
+    api_key: str | None = None,
+) -> tuple[str, str, str | None, str | None]:
+    """Resolve LLM endpoint config from args, falling back to WORLD_ENGINE_LLM_* env vars."""
+    return (
+        (base_url or os.environ.get("WORLD_ENGINE_LLM_BASE", "http://127.0.0.1:4000/v1")).rstrip("/"),
+        model or os.environ.get("WORLD_ENGINE_LLM_MODEL", "auto"),
+        route or os.environ.get("WORLD_ENGINE_LLM_ROUTE") or None,
+        api_key or os.environ.get("WORLD_ENGINE_LLM_KEY") or None,
+    )
+
+
+def chat_completion(
+    base_url: str,
+    model: str,
+    messages: list[dict[str, str]],
+    route: str | None = None,
+    api_key: str | None = None,
+    timeout: float = 180.0,
+    temperature: float = 0.2,
+) -> str:
+    """POST an OpenAI-compatible chat completion; return the reply text.
+
+    Shared by `LLMDirector` and `backends.social.LLMMind` — one HTTP path for
+    every LLM in the system.
+    """
+    payload: dict[str, object] = {"model": model, "messages": messages, "temperature": temperature}
+    if route:
+        payload["route"] = route
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    request = urllib.request.Request(
+        f"{base_url}/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    return str(body["choices"][0]["message"]["content"])
+
+
 #: (integrator, dt, rationale) — a hypothesis arc for the pure-Python pendulum backend
 PENDULUM_PLAN: tuple[tuple[str, float, str], ...] = (
     ("explicit_euler", 0.02, "baseline: naive integrator at coarse dt"),
@@ -116,6 +161,8 @@ Rules:
 - configure before the first run; every run restarts from the same initial conditions.
 - args.integrator MUST be copied verbatim from the observation's available_integrators list —
   never use an integrator name that is not in that list, even if you know it from physics.
+- If available_integrators is empty there is nothing to configure — skip configure and go
+  straight to run.
 - The observation's "configured" field shows the currently configured experiment (null if none).
   If it is set and there is no result for it yet, send run — do NOT reconfigure the same settings.
 - A deterministic verifier (not you) judges energy conservation; read its results and notes, then adapt.
@@ -142,12 +189,9 @@ class LLMDirector:
         api_key: str | None = None,
         timeout: float = 180.0,
     ) -> None:
-        self.base_url = (
-            base_url or os.environ.get("WORLD_ENGINE_LLM_BASE", "http://127.0.0.1:4000/v1")
-        ).rstrip("/")
-        self.model = model or os.environ.get("WORLD_ENGINE_LLM_MODEL", "auto")
-        self.route = route or os.environ.get("WORLD_ENGINE_LLM_ROUTE") or None
-        self.api_key = api_key or os.environ.get("WORLD_ENGINE_LLM_KEY") or None
+        self.base_url, self.model, self.route, self.api_key = llm_defaults(
+            base_url, model, route, api_key
+        )
         self.timeout = timeout
 
     def decide(self, observation: Observation) -> Intent:
@@ -168,27 +212,17 @@ class LLMDirector:
         raise DirectorError(f"LLM failed to produce a valid intent: {error_note}")
 
     def _chat(self, user_content: str) -> str:
-        payload: dict[str, object] = {
-            "model": self.model,
-            "messages": [
+        return chat_completion(
+            self.base_url,
+            self.model,
+            [
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
-            "temperature": 0.2,
-        }
-        if self.route:
-            payload["route"] = self.route
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        request = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
+            route=self.route,
+            api_key=self.api_key,
+            timeout=self.timeout,
         )
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
-        return str(body["choices"][0]["message"]["content"])
 
 
 def extract_json(text: str) -> str:

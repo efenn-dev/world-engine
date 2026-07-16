@@ -150,9 +150,13 @@ class Engine:
         samples: list[dict[str, object]] = []
         for event in self.backend.advance(self.world, duration):
             self._apply(event.model_copy(update={"data": {**event.data, "experiment": experiment}}))
-            # generic sample: t + every backend diagnostic except the state fold
+            # generic sample: t + kind + every backend diagnostic except the state fold
             samples.append(
-                {"t": event.t, **{k: v for k, v in event.data.items() if k != "set_components"}}
+                {
+                    "t": event.t,
+                    "kind": event.kind,
+                    **{k: v for k, v in event.data.items() if k != "set_components"},
+                }
             )
         verdict = self.verifier.check(samples)
         self.eventlog.append(
@@ -165,8 +169,8 @@ class Engine:
         config = self.world.get(self.sim_entity, "sim_config") or {}
         result = ExperimentResult(
             experiment=experiment,
-            integrator=str(config.get("integrator")),
-            dt=float(config.get("dt", 0.0)),
+            integrator=str(config.get("integrator") or "n/a"),
+            dt=float(config.get("dt") or 0.0),
             duration=duration,
             max_drift_pct=verdict.metrics.get("max_drift_pct", float("nan")),
             passed=verdict.passed,
