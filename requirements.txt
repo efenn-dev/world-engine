@@ -1,0 +1,7 @@
+pydantic>=2.5
+
+# optional — energy plots from the demo's PlotProjector (degrades gracefully without it)
+matplotlib>=3.8
+
+# dev
+pytest>=8
