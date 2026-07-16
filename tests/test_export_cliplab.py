@@ -33,13 +33,38 @@ def test_shot_duration_scales_with_dialogue() -> None:
 
 def test_caption_cues_fit_inside_clip_and_anchor() -> None:
     shot = _shot(5, "meeting", ['Rook: "Well met."', 'Mira: "Found you!"'])
-    duration = export_cliplab.shot_duration(shot)
-    cues = export_cliplab.caption_cues(shot, "shot-005", duration)
-    assert len(cues) == 2
+    duration, cues, sfx = export_cliplab.shot_assembly(shot, "shot-005")
+    assert len(cues) == 2 and sfx == []  # no voice dir -> captions only
     assert all(cue["clipUuid"] == "shot-005" for cue in cues)
     assert cues[0]["start"] >= 0 and cues[-1]["end"] <= duration
     assert cues[0]["end"] <= cues[1]["start"]  # no overlap
     assert cues[1]["text"] == 'Mira: "Found you!"'
+
+
+def _write_wav(path: Path, seconds: float) -> None:
+    import wave
+
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(b"\x00\x01" * int(24000 * seconds))
+
+
+def test_voice_audio_stretches_slot_and_emits_sfx(tmp_path: Path) -> None:
+    shot = _shot(5, "meeting", ['Rook: "A very long greeting indeed."'])
+    _write_wav(tmp_path / "shot_005_line_00.wav", seconds=3.9)  # longer than the 2.2s slot
+    duration, cues, sfx = export_cliplab.shot_assembly(shot, "shot-005", tmp_path)
+    import pytest
+
+    assert duration == pytest.approx(2.5 + 3.9 + 0.4)  # base + real audio + pad
+    assert len(sfx) == 1
+    voice = sfx[0]
+    assert voice["clipUuid"] == "shot-005" and voice["label"] == "Rook"
+    assert voice["end"] - voice["start"] == pytest.approx(3.9)
+    assert voice["end"] <= duration
+    assert Path(voice["path"]).is_absolute()
+    assert cues[0]["start"] == voice["start"]  # caption and audio aligned
 
 
 def test_build_manifest_shape(tmp_path: Path) -> None:
@@ -56,6 +81,7 @@ def test_build_manifest_shape(tmp_path: Path) -> None:
         assert clip["trimEnd"] == clip["sourceDuration"] > clip["trimStart"]
     assert manifest["captions"]["timelineBasis"] == "source-anchored"
     assert manifest["captions"]["cues"][0]["clipUuid"] == "shot-002"
+    assert manifest["sfx"] == []  # no voice dir
     # a shot without a rendered clip is excluded rather than breaking the manifest
     partial = export_cliplab.build_manifest(board, {1: files[1]})
     assert [c["uuid"] for c in partial["clips"]] == ["shot-001"]
