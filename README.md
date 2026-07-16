@@ -51,7 +51,9 @@ python demos/rendezvous.py --minds llm           # each agent is an LLM via llm-
 python demos/rendezvous.py --storyboard llm      # LLM-enriched shot prompts (Track 3)
 
 # render the board into key frames (needs sd-lab's A1111 on :7861)
-python scripts/render_storyboard.py runs/<ts>/storyboard.json
+python scripts/render_storyboard.py runs/<ts>/storyboard.json \
+    --lora "Mira=mira_oc:1:miraoc" --lora "Rook=rook_oc:1:rookoc" \
+    --regional   # multi-character shots: one region per character
 
 python -m pytest tests -q                        # MuJoCo tests skip if mujoco missing
 ```
@@ -145,6 +147,10 @@ tests/                      event log · backend physics · MuJoCo · social · 
    failure). Outputs `storyboard.json` (ready for an image pipeline: SDXL → ClipLab) and
    `storyboard.md`. `scripts/render_storyboard.py` closes the loop: it feeds the board
    to sd-lab's A1111 API (:7861) and drops deterministic frames (seed = base + shot) plus
-   a `frames/index.html` contact sheet next to the board. Known limit at SD1.5: two-person
-   shots can blend character features — per-character LoRAs / regional prompting is the
-   planned fix. Next media step: character LoRAs, then assemble frames + dialogue in ClipLab.
+   a `frames/index.html` contact sheet next to the board. **Character consistency recipe**
+   (both verified live): solo shots use per-character LoRAs (`--lora Name=file:w:trigger`,
+   injected only when that character is in the shot's ground-truth cast); multi-character
+   shots use `--regional` — one Regional-Prompter *Attention* column per character built
+   from the board's character/place sheets. Per-region LoRAs (Latent mode) were tried and
+   rejected: identity LoRAs bleed across regions and blend into one figure. Next media
+   step: assemble frames + dialogue in ClipLab.

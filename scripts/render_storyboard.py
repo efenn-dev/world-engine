@@ -46,6 +46,40 @@ def _post(base_url: str, path: str, payload: dict, timeout: float) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+def regional_script_args(region_count: int) -> list:
+    """Regional Prompter alwayson args: Matrix/Columns, equal ratios, Attention mode.
+
+    Attention (not Latent) is deliberate: per-region *text* binds attributes
+    reliably; per-region LoRAs in Latent mode bleed across regions with
+    identity LoRAs (verified empirically — see world-engine memory/commits).
+    """
+    return [
+        True, False, "Matrix", "Columns", "Mask", "Prompt",
+        ",".join(["1"] * region_count), "0.2", False, True, False,
+        "Attention", [False], "0", "0", "0.4", None, "0", "0", False,
+    ]
+
+
+def build_regional_prompt(shot: dict, board: dict) -> str:
+    """Common chunk (style + framing + setting + action) BREAK one region per character.
+
+    Character sheets come from the board's `characters` map; each character is
+    rendered in its own column, left to right in ground-truth cast order. The
+    subjects must fill their regions ("medium two-shot, upper body") — a
+    scene-dominant prompt shrinks them into landscape and the binding is lost.
+    """
+    characters = shot.get("characters", [])
+    sheets = board.get("characters", {})
+    place = shot.get("place", "")
+    place_sheet = board.get("places", {}).get(place, place)
+    common = (
+        f"{board.get('style', '')}, medium two-shot, {len(characters)} people, upper body, "
+        f"{place_sheet} background, {shot.get('action', '')}"
+    )
+    regions = [f"{sheets.get(name, name)}, upper body" for name in characters]
+    return common + "".join(f" BREAK {region}" for region in regions)
+
+
 def parse_lora_specs(specs: list[str]) -> dict[str, tuple[str, float, str]]:
     """Parse repeated --lora "Name=file:weight:trigger" into {name: (file, weight, trigger)}.
 
@@ -94,11 +128,19 @@ def render_shot(
     out_path: Path,
     args: argparse.Namespace,
     loras: dict[str, tuple[str, float, str]] | None = None,
+    board: dict | None = None,
 ) -> None:
     """One txt2img call; writes the first returned image to out_path."""
-    prompt = shot["image_prompt"]
-    if loras:
-        prompt = apply_loras(prompt, shot.get("characters", []), loras)
+    characters = shot.get("characters", [])
+    regional = args.regional and len(characters) >= 2
+    if regional:
+        # multi-character: region-per-character text binding; LoRAs deliberately
+        # skipped here (stacked identity LoRAs blend into one figure)
+        prompt = build_regional_prompt(shot, board or {})
+    else:
+        prompt = shot["image_prompt"]
+        if loras:
+            prompt = apply_loras(prompt, characters, loras)
     payload = {
         "prompt": prompt,
         "negative_prompt": args.negative,
@@ -111,6 +153,11 @@ def render_shot(
         "batch_size": 1,
         "n_iter": 1,
     }
+    if regional:
+        payload["alwayson_scripts"] = {
+            "Regional Prompter": {"args": regional_script_args(len(characters))}
+        }
+        payload["negative_prompt"] = args.negative + ", far away, tiny figures"
     body = _post(base_url, "/sdapi/v1/txt2img", payload, timeout=args.timeout)
     images = body.get("images") or []
     if not images:
@@ -158,6 +205,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="per-character LoRA, applied only to shots that character is in "
         "(e.g. Mira=mira_oc:0.85:miraoc); repeatable",
     )
+    parser.add_argument(
+        "--regional",
+        action="store_true",
+        help="multi-character shots: one Regional-Prompter column per character "
+        "(text sheets from the board; needs sd-webui-regional-prompter installed)",
+    )
     parser.add_argument("--shots", default=None, help="subset like '1,3,5-7' (default: all)")
     parser.add_argument("--width", type=int, default=768)
     parser.add_argument("--height", type=int, default=432)
@@ -203,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
             rendered[number] = out_path.name
             continue
         try:
-            render_shot(args.base_url, shot, out_path, args, loras)
+            render_shot(args.base_url, shot, out_path, args, loras, board)
             rendered[number] = out_path.name
             log.info("shot %d (%s): %s", number, shot["beat"], out_path)
         except (urllib.error.URLError, RuntimeError, OSError) as exc:

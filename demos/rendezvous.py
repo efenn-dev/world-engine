@@ -50,7 +50,7 @@ WORLD_ENTITY, MIRA, ROOK = 1, 10, 11
 #: in any given shot always comes from ground-truth events
 CHARACTER_SHEETS = {
     "Mira": "Mira, a young scout with short copper hair, a weathered green cloak, and determined amber eyes",
-    "Rook": "Rook, an elderly archivist with round spectacles, ink-stained gray robes, and a gentle smile",
+    "Rook": "Rook, an elderly archivist with short gray hair, round spectacles, ink-stained gray robes, and a gentle smile",
 }
 PLACE_SHEETS = {
     "tavern": "a warm lantern-lit tavern with rough wooden tables and a crackling hearth",

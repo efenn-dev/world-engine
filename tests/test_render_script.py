@@ -30,6 +30,26 @@ def test_parse_lora_specs_rejects_malformed() -> None:
         render_storyboard.parse_lora_specs(["Mira=mira_oc:0.85"])  # missing trigger
 
 
+def test_regional_prompt_one_region_per_character() -> None:
+    board = {
+        "style": "anime key visual",
+        "characters": {"Mira": "Mira, copper hair, green cloak", "Rook": "Rook, spectacles, gray robes"},
+        "places": {"docks": "fog-covered wooden docks"},
+    }
+    shot = {"characters": ["Mira", "Rook"], "place": "docks", "action": "Mira arrives and finds Rook"}
+    prompt = render_storyboard.build_regional_prompt(shot, board)
+    common, mira_region, rook_region = prompt.split(" BREAK ")
+    assert "fog-covered wooden docks" in common and "2 people" in common
+    assert "copper hair" in mira_region and "spectacles" not in mira_region
+    assert "spectacles" in rook_region and "copper hair" not in rook_region
+
+
+def test_regional_script_args_shape() -> None:
+    args = render_storyboard.regional_script_args(3)
+    assert len(args) == 20
+    assert args[0] is True and args[11] == "Attention" and args[6] == "1,1,1"
+
+
 def test_parse_shot_selection() -> None:
     parse = render_storyboard.parse_shot_selection
     assert parse(None, 5) == [1, 2, 3, 4, 5]

@@ -68,11 +68,18 @@ class Shot(BaseModel):
 
 
 class Storyboard(BaseModel):
-    """The full board: what an image/video pipeline consumes."""
+    """The full board: what an image/video pipeline consumes.
+
+    Carries the character/place sheets so the board is self-contained — a
+    renderer can build per-region prompts (multi-character shots) without
+    access to the demo's configuration.
+    """
 
     title: str
     style: str
     episodes: int
+    characters: dict[str, str] = Field(default_factory=dict)
+    places: dict[str, str] = Field(default_factory=dict)
     shots: list[Shot] = Field(default_factory=list)
 
 
@@ -271,7 +278,12 @@ class StoryboardProjector(Projector):
         if outcome.concluded:
             shots.append(self._card(len(shots) + 1, outcome))
         board = Storyboard(
-            title=self.title, style=self.style, episodes=len(outcome.results), shots=shots
+            title=self.title,
+            style=self.style,
+            episodes=len(outcome.results),
+            characters=dict(self.characters),
+            places=dict(self.places),
+            shots=shots,
         )
         self.out_dir.mkdir(parents=True, exist_ok=True)
         json_path = self.out_dir / "storyboard.json"
