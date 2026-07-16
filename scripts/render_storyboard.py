@@ -46,6 +46,33 @@ def _post(base_url: str, path: str, payload: dict, timeout: float) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+def parse_lora_specs(specs: list[str]) -> dict[str, tuple[str, float, str]]:
+    """Parse repeated --lora "Name=file:weight:trigger" into {name: (file, weight, trigger)}.
+
+    The mapping is applied per shot from its ground-truth `characters` list, so
+    a character's LoRA (and trigger token) is only active when that character
+    is actually in frame.
+    """
+    mapping: dict[str, tuple[str, float, str]] = {}
+    for spec in specs:
+        name, _, rest = spec.partition("=")
+        parts = rest.split(":")
+        if not name or len(parts) != 3:
+            raise ValueError(f"bad --lora spec {spec!r}; expected Name=file:weight:trigger")
+        mapping[name.strip()] = (parts[0].strip(), float(parts[1]), parts[2].strip())
+    return mapping
+
+
+def apply_loras(prompt: str, characters: list[str], loras: dict[str, tuple[str, float, str]]) -> str:
+    """Prepend <lora:...> tags + trigger tokens for the characters present in the shot."""
+    prefixes = []
+    for character in characters:
+        if character in loras:
+            file, weight, trigger = loras[character]
+            prefixes.append(f"<lora:{file}:{weight:g}> {trigger}")
+    return f"{', '.join(prefixes)}, {prompt}" if prefixes else prompt
+
+
 def parse_shot_selection(spec: str | None, count: int) -> list[int]:
     """Parse "1,3,5-7" into shot numbers; None means all shots."""
     if not spec:
@@ -66,10 +93,14 @@ def render_shot(
     shot: dict,
     out_path: Path,
     args: argparse.Namespace,
+    loras: dict[str, tuple[str, float, str]] | None = None,
 ) -> None:
     """One txt2img call; writes the first returned image to out_path."""
+    prompt = shot["image_prompt"]
+    if loras:
+        prompt = apply_loras(prompt, shot.get("characters", []), loras)
     payload = {
-        "prompt": shot["image_prompt"],
+        "prompt": prompt,
         "negative_prompt": args.negative,
         "width": args.width,
         "height": args.height,
@@ -119,6 +150,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", type=Path, default=None, help="frames dir (default: <board dir>/frames)")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="A1111-compatible API base URL")
     parser.add_argument("--checkpoint", default="DreamShaper_8_pruned", help="checkpoint to activate first ('' to skip)")
+    parser.add_argument(
+        "--lora",
+        action="append",
+        default=[],
+        metavar="Name=file:weight:trigger",
+        help="per-character LoRA, applied only to shots that character is in "
+        "(e.g. Mira=mira_oc:0.85:miraoc); repeatable",
+    )
     parser.add_argument("--shots", default=None, help="subset like '1,3,5-7' (default: all)")
     parser.add_argument("--width", type=int, default=768)
     parser.add_argument("--height", type=int, default=432)
@@ -149,6 +188,9 @@ def main(argv: list[str] | None = None) -> int:
         log.info("activating checkpoint %s (may take a moment)", args.checkpoint)
         _post(args.base_url, "/sdapi/v1/options", {"sd_model_checkpoint": args.checkpoint}, timeout=300.0)
 
+    loras = parse_lora_specs(args.lora)
+    if loras:
+        log.info("character LoRAs: %s", {k: v[0] for k, v in loras.items()})
     selection = parse_shot_selection(args.shots, len(shots))
     by_number = {shot["shot"]: shot for shot in shots}
     rendered: dict[int, str] = {}
@@ -161,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
             rendered[number] = out_path.name
             continue
         try:
-            render_shot(args.base_url, shot, out_path, args)
+            render_shot(args.base_url, shot, out_path, args, loras)
             rendered[number] = out_path.name
             log.info("shot %d (%s): %s", number, shot["beat"], out_path)
         except (urllib.error.URLError, RuntimeError, OSError) as exc:

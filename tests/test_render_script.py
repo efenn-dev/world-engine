@@ -11,6 +11,25 @@ render_storyboard = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(render_storyboard)
 
 
+def test_lora_injection_scoped_to_present_characters() -> None:
+    loras = render_storyboard.parse_lora_specs(
+        ["Mira=mira_oc:0.85:miraoc", "Rook=rook_oc:0.8:rookoc"]
+    )
+    both = render_storyboard.apply_loras("a meeting", ["Mira", "Rook"], loras)
+    assert both.startswith("<lora:mira_oc:0.85> miraoc, <lora:rook_oc:0.8> rookoc, ")
+    solo = render_storyboard.apply_loras("a walk", ["Mira"], loras)
+    assert "rook_oc" not in solo and solo.endswith("a walk")
+    card = render_storyboard.apply_loras("title card", [], loras)
+    assert card == "title card"  # no cast, no injection
+
+
+def test_parse_lora_specs_rejects_malformed() -> None:
+    import pytest
+
+    with pytest.raises(ValueError):
+        render_storyboard.parse_lora_specs(["Mira=mira_oc:0.85"])  # missing trigger
+
+
 def test_parse_shot_selection() -> None:
     parse = render_storyboard.parse_shot_selection
     assert parse(None, 5) == [1, 2, 3, 4, 5]
