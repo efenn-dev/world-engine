@@ -55,6 +55,9 @@ python scripts/render_storyboard.py runs/<ts>/storyboard.json \
     --lora "Mira=mira_oc:1:miraoc" --lora "Rook=rook_oc:1:rookoc" \
     --regional   # multi-character shots: one region per character
 
+# frames + dialogue -> ClipLab Pro Editor timeline (manifest v2 + per-shot clips)
+python scripts/export_cliplab.py runs/<ts>/storyboard.json --frames runs/<ts>/frames-lora
+
 python -m pytest tests -q                        # MuJoCo tests skip if mujoco missing
 ```
 
@@ -152,5 +155,7 @@ tests/                      event log · backend physics · MuJoCo · social · 
    injected only when that character is in the shot's ground-truth cast); multi-character
    shots use `--regional` — one Regional-Prompter *Attention* column per character built
    from the board's character/place sheets. Per-region LoRAs (Latent mode) were tried and
-   rejected: identity LoRAs bleed across regions and blend into one figure. Next media
-   step: assemble frames + dialogue in ClipLab.
+   rejected: identity LoRAs bleed across regions and blend into one figure.
+   `scripts/export_cliplab.py` completes the chain: per-shot H.264 clips (beat-scaled
+   durations) + a ClipForge **manifest v2** with dialogue as clip-anchored caption cues —
+   verified against ClipLab's own validator; import it via the Editor's manifest flow.
