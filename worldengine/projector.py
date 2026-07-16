@@ -143,11 +143,5 @@ class TranscriptProjector(Projector):
             log.info("transcript written to %s", path)
 
 
-class StoryboardProjector(Projector):
-    """Placeholder for the Track-3 swap: event slices → shot prompts → media.
-
-    The intended shape: read narrative-relevant events (who did what, where,
-    verdicts, reversals), group them into beats, emit one shot-prompt per beat
-    (character sheet + scene + camera), and hand the batch to an image/video
-    pipeline (SDXL → ClipLab). Deliberately unimplemented in this slice.
-    """
+# StoryboardProjector (Track 3: beats → shot prompts) lives in worldengine.storyboard —
+# it is a full subsystem (beat segmentation, prompt assembly, LLM enrichment).

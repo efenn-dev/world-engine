@@ -31,6 +31,7 @@ from worldengine.engine import Engine
 from worldengine.eventlog import EventLog
 from worldengine.models import Event, Intent, Observation
 from worldengine.projector import TextProjector, TranscriptProjector
+from worldengine.storyboard import LLMShotEnricher, StoryboardProjector
 from worldengine.verifier import Rendezvous
 from worldengine.world import World, fold
 
@@ -44,6 +45,20 @@ GOAL = (
 
 PLACES = ["tavern", "library", "market", "docks"]
 WORLD_ENTITY, MIRA, ROOK = 1, 10, 11
+
+#: visual sheets consumed by the StoryboardProjector — style only; presence
+#: in any given shot always comes from ground-truth events
+CHARACTER_SHEETS = {
+    "Mira": "Mira, a young scout with short copper hair, a weathered green cloak, and determined amber eyes",
+    "Rook": "Rook, an elderly archivist with round spectacles, ink-stained gray robes, and a gentle smile",
+}
+PLACE_SHEETS = {
+    "tavern": "a warm lantern-lit tavern with rough wooden tables and a crackling hearth",
+    "library": "a dusty candlelit library with towering, overloaded shelves",
+    "market": "a bustling dusk market under canvas awnings",
+    "docks": "fog-covered wooden docks with moored boats and circling gulls",
+}
+STYLE = "anime key visual, cel shading, cinematic lighting, painterly detailed background"
 
 
 class EscalatingDirector:
@@ -130,6 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--minds", choices=("scripted", "llm"), default="scripted")
     parser.add_argument("--director", choices=("scripted", "llm"), default="scripted")
+    parser.add_argument(
+        "--storyboard",
+        choices=("template", "llm", "off"),
+        default="template",
+        help="storyboard prompts: deterministic templates, LLM-enriched, or disabled",
+    )
     parser.add_argument("--ticks", type=int, default=2, help="first episode length; doubles per episode")
     parser.add_argument("--episodes", type=int, default=4, help="max episodes before conceding")
     parser.add_argument("--rounds", type=int, default=12, help="max director rounds")
@@ -164,6 +185,22 @@ def main(argv: list[str] | None = None) -> int:
     else:
         director = EscalatingDirector(start_ticks=args.ticks, max_episodes=args.episodes)
 
+    projectors = [TextProjector(), TranscriptProjector(out_dir)]
+    if args.storyboard != "off":
+        enricher = None
+        if args.storyboard == "llm":
+            enricher = LLMShotEnricher(base_url=args.llm_base, model=args.llm_model, route=args.llm_route)
+        projectors.append(
+            StoryboardProjector(
+                out_dir,
+                characters=CHARACTER_SHEETS,
+                places=PLACE_SHEETS,
+                style=STYLE,
+                title="The Rendezvous",
+                enricher=enricher,
+            )
+        )
+
     engine = Engine(
         world=world,
         eventlog=eventlog,
@@ -171,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
         verifier=Rendezvous(),
         director=director,
         goal=GOAL,
-        projectors=[TextProjector(), TranscriptProjector(out_dir)],
+        projectors=projectors,
         max_rounds=args.rounds,
         sim_entity=WORLD_ENTITY,
     )

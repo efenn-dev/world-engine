@@ -48,6 +48,7 @@ python demos/pendulum_energy.py --backend mujoco # MuJoCo as ground truth (same 
 
 python demos/rendezvous.py                       # social backend: agents find each other
 python demos/rendezvous.py --minds llm           # each agent is an LLM via llm-router
+python demos/rendezvous.py --storyboard llm      # LLM-enriched shot prompts (Track 3)
 
 python -m pytest tests -q                        # MuJoCo tests skip if mujoco missing
 ```
@@ -78,7 +79,8 @@ worldengine/
   verifier.py     deterministic invariants (EnergyConservation)
   director.py     ScriptedDirector (offline) · LLMDirector (llm-router)
   engine.py       the loop: observe → decide → validate → apply → advance → verify
-  projector.py    TextProjector · PlotProjector · StoryboardProjector (stub)
+  projector.py    TextProjector · PlotProjector · TranscriptProjector
+  storyboard.py   Track 3: beats → Shot prompts (StoryboardProjector · LLMShotEnricher)
   backends/
     pendulum.py        deterministic ground truth (explicit/symplectic Euler, RK4)
     mujoco_backend.py  MuJoCo behind the same protocol (any MJCF; euler/implicit*/rk4)
@@ -130,7 +132,12 @@ tests/                      event log · backend physics · MuJoCo · social · 
    entry, never state). `Rendezvous` verifier judges co-location from `social.tick`
    ground truth, never from what agents *say*. `TranscriptProjector` renders episodes
    as scripts (see `runs/<ts>/transcript.txt`).
-4. **Track 3 (media):** implement `projector.StoryboardProjector` — event slices →
-   beats → shot prompts → SDXL → ClipLab timeline. `TranscriptProjector` is its
-   precursor: replace "format a line" with "emit a shot prompt". Projectors are pure;
-   the engine never changes.
+4. ~~**Track 3 (media):** `StoryboardProjector`~~ — **done** (`worldengine/storyboard.py`).
+   Deterministic beat segmentation (establishing / search montage / meeting / dialogue /
+   card) over the event stream; one image prompt per beat assembled from configured
+   character/setting sheets — but WHO/WHAT/WHERE always comes from ground-truth events,
+   and a sheet only appears when that character is actually in the shot. Optional
+   `LLMShotEnricher` rewrites prompts cinematically (facts pinned; template kept on any
+   failure). Outputs `storyboard.json` (ready for an image pipeline: SDXL → ClipLab) and
+   `storyboard.md`. Next media step: feed storyboard.json to sd-lab for actual key
+   frames, then assemble in ClipLab.
