@@ -1,0 +1,13 @@
+<!-- Undamped point-mass pendulum: 1 kg bob, 1 m below a frictionless hinge.
+     True dynamics conserve total energy exactly (no damping, no contacts),
+     so any drift the verifier sees is integrator error - same experiment as
+     backends/pendulum.py, but with MuJoCo as ground truth. -->
+<mujoco model="pendulum">
+  <option gravity="0 0 -9.81" timestep="0.002" integrator="Euler"/>
+  <worldbody>
+    <body name="pendulum">
+      <joint name="hinge" type="hinge" axis="0 1 0" pos="0 0 0" damping="0"/>
+      <geom name="bob" type="sphere" size="0.05" pos="0 0 -1" mass="1"/>
+    </body>
+  </worldbody>
+</mujoco>

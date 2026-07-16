@@ -24,7 +24,8 @@ everything deterministic is replayable from the append-only event log.
                │ advance truth (deterministic, substeps)
    ┌───────────┴─┬──────────────┬─────────────┐
    │  Physics    │  Chemistry   │   Social    │   ← pluggable backends
-   │ (this slice)│  (planned)   │   (stub)    │
+   │ (pendulum + │  (planned)   │   (stub)    │
+   │   MuJoCo)   │              │             │
    └─────────────┴──────────────┴─────────────┘
 ```
 
@@ -43,8 +44,9 @@ pip install -r requirements.txt      # pydantic required; matplotlib optional (p
 
 python demos/pendulum_energy.py                  # scripted director, fully offline
 python demos/pendulum_energy.py --director llm   # decisions via llm-router (:4000)
+python demos/pendulum_energy.py --backend mujoco # MuJoCo as ground truth (same engine)
 
-python -m pytest tests -q
+python -m pytest tests -q                        # MuJoCo tests skip if mujoco missing
 ```
 
 Each run writes `runs/<timestamp>/events.db` (the full replayable session) and
@@ -75,10 +77,12 @@ worldengine/
   engine.py       the loop: observe → decide → validate → apply → advance → verify
   projector.py    TextProjector · PlotProjector · StoryboardProjector (stub)
   backends/
-    pendulum.py   deterministic ground truth (explicit/symplectic Euler, RK4)
-    social.py     Track-2 stub (LLM agent minds — design in docstring)
-demos/pendulum_energy.py    runnable hypothesis loop
-tests/                      event log · backend physics · engine loop
+    pendulum.py        deterministic ground truth (explicit/symplectic Euler, RK4)
+    mujoco_backend.py  MuJoCo behind the same protocol (any MJCF; euler/implicit*/rk4)
+    social.py          Track-2 stub (LLM agent minds — design in docstring)
+assets/pendulum.xml   MJCF model for the MuJoCo demo (undamped point-mass pendulum)
+demos/pendulum_energy.py    runnable hypothesis loop (--backend pendulum|mujoco)
+tests/                      event log · backend physics · MuJoCo · engine loop
 ```
 
 ## Design decisions
@@ -100,11 +104,17 @@ tests/                      event log · backend physics · engine loop
 - **Scoped observation.** The Director sees a small typed digest (`Observation`),
   never the raw world — this is the context-budget wall, treated as a first-class
   perception function.
+- **Capabilities are backend-owned.** Each backend advertises its `integrators`;
+  the contract validates against them and the observation carries them, so the
+  Director learns what's possible from the world, not from a hardcoded prompt.
+  (Live-verified: an LLM proposing a pendulum-backend integrator to MuJoCo gets a
+  contract rejection listing the real options, and recovers.)
 
 ## Swap points (roadmap)
 
-1. **Physics for real:** `MuJoCoBackend` implementing `backends.Backend` (reset/advance
-   + sampled events); the engine, contract and verifier shape don't change.
+1. ~~**Physics for real:** `MuJoCoBackend`~~ — **done.** Any MJCF model behind the same
+   reset/advance protocol; the engine, contract, verifier and directors were untouched
+   (see `test_full_engine_loop_on_mujoco`).
 2. **Chemistry:** RDKit/OpenMM backend; verifier = mass balance / energy.
 3. **Track 2 (living world):** implement `backends/social.py` — per-agent scoped
    observations, same intent contract, LLM outputs logged as events.

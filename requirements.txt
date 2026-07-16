@@ -1,5 +1,8 @@
 pydantic>=2.5
 
+# MuJoCo reality backend (imported lazily; only --backend mujoco needs it)
+mujoco>=3.0
+
 # optional — energy plots from the demo's PlotProjector (degrades gracefully without it)
 matplotlib>=3.8
 

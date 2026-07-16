@@ -34,29 +34,35 @@ class DirectorError(RuntimeError):
     """The director failed to produce a valid intent."""
 
 
+#: (integrator, dt, rationale) — a hypothesis arc for the pure-Python pendulum backend
+PENDULUM_PLAN: tuple[tuple[str, float, str], ...] = (
+    ("explicit_euler", 0.02, "baseline: naive integrator at coarse dt"),
+    ("explicit_euler", 0.002, "hypothesis: drift is step-size error — refine dt 10x"),
+    (
+        "symplectic_euler",
+        0.005,
+        "hypothesis: drift is structural to explicit Euler — switch to a symplectic method",
+    ),
+    ("rk4", 0.02, "fallback: high-order integrator"),
+)
+
+
 class ScriptedDirector:
     """Deterministic hypothesis arc, reacting to verifier feedback.
 
-    Baseline explicit Euler at coarse dt (fails: energy pumps in) →
-    "maybe it's step size" — refine dt 10x (still fails) →
-    "it's structural" — switch to a symplectic integrator (passes) → conclude.
-    Falls back to RK4 if symplectic misses tolerance, and concedes if the
-    whole plan is exhausted.
+    Walks a (integrator, dt, rationale) plan one experiment at a time,
+    concludes on the first verifier pass, and concedes if the plan runs out.
+    The default plan targets the pure-Python pendulum backend; pass a
+    different plan for other backends (see demos/pendulum_energy.py).
     """
 
-    _PLAN: tuple[tuple[str, float, str], ...] = (
-        ("explicit_euler", 0.02, "baseline: naive integrator at coarse dt"),
-        ("explicit_euler", 0.002, "hypothesis: drift is step-size error — refine dt 10x"),
-        (
-            "symplectic_euler",
-            0.005,
-            "hypothesis: drift is structural to explicit Euler — switch to a symplectic method",
-        ),
-        ("rk4", 0.02, "fallback: high-order integrator"),
-    )
-
-    def __init__(self, run_duration: float = 30.0) -> None:
+    def __init__(
+        self,
+        run_duration: float = 30.0,
+        plan: tuple[tuple[str, float, str], ...] = PENDULUM_PLAN,
+    ) -> None:
         self.run_duration = run_duration
+        self.plan = plan
         self._pending_run = False
 
     def decide(self, observation: Observation) -> Intent:
@@ -64,14 +70,14 @@ class ScriptedDirector:
         results = observation.results
         if results and results[-1].passed:
             best = results[-1]
+            failed = ", ".join(f"{r.integrator}@dt={r.dt:g}" for r in results if not r.passed)
             return Intent(
                 action="conclude",
                 args={
                     "summary": (
                         f"{best.integrator} at dt={best.dt:g} conserves energy "
-                        f"(max drift {best.max_drift_pct:.4f}% over {best.duration:g}s); "
-                        f"explicit Euler drifted regardless of step size, so the error "
-                        f"was structural, not resolution."
+                        f"(max drift {best.max_drift_pct:.4f}% over {best.duration:g}s)"
+                        + (f"; failed along the way: {failed}." if failed else ".")
                     )
                 },
                 rationale="verifier passed — hypothesis confirmed",
@@ -84,13 +90,13 @@ class ScriptedDirector:
                 rationale="run the configured experiment",
             )
         attempt = len(results)
-        if attempt >= len(self._PLAN):
+        if attempt >= len(self.plan):
             return Intent(
                 action="conclude",
                 args={"summary": "no tested configuration conserved energy within tolerance"},
                 rationale="plan exhausted",
             )
-        integrator, dt, rationale = self._PLAN[attempt]
+        integrator, dt, rationale = self.plan[attempt]
         self._pending_run = True
         return Intent(
             action="configure",
@@ -102,16 +108,19 @@ class ScriptedDirector:
 _SYSTEM_PROMPT = """You are the Director of a physics world-engine. Your goal is stated in each observation.
 
 You interact ONLY by emitting exactly one JSON intent per turn, chosen from:
-  {"action": "configure", "args": {"integrator": "explicit_euler" | "symplectic_euler" | "rk4", "dt": <number, 0 < dt <= 0.1>}, "rationale": "<why>"}
+  {"action": "configure", "args": {"integrator": "<one of the observation's available_integrators>", "dt": <number, 0 < dt <= 0.1>}, "rationale": "<why>"}
   {"action": "run", "args": {"duration": <seconds, 0 < duration <= 300>}, "rationale": "<why>"}
   {"action": "conclude", "args": {"summary": "<what you learned>"}, "rationale": "<why>"}
 
 Rules:
 - configure before the first run; every run restarts from the same initial conditions.
+- args.integrator MUST be copied verbatim from the observation's available_integrators list —
+  never use an integrator name that is not in that list, even if you know it from physics.
 - The observation's "configured" field shows the currently configured experiment (null if none).
   If it is set and there is no result for it yet, send run — do NOT reconfigure the same settings.
 - A deterministic verifier (not you) judges energy conservation; read its results and notes, then adapt.
-- When a result passes, conclude with a summary of what you learned.
+- The moment ANY result has "passed": true, your next intent MUST be conclude (summarize what
+  you learned). Do not keep exploring after a pass.
 - Respond with ONLY the JSON object — no prose, no code fences, no thinking text."""
 
 

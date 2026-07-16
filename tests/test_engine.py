@@ -51,7 +51,8 @@ def test_scripted_arc_converges_on_symplectic(tmp_path: Path) -> None:
     assert outcome.concluded
     assert [r.passed for r in outcome.results] == [False, False, True]
     assert outcome.results[-1].integrator == "symplectic_euler"
-    assert "structural" in outcome.summary
+    assert "symplectic_euler" in outcome.summary and "conserves energy" in outcome.summary
+    assert "explicit_euler@dt=0.02" in outcome.summary  # failures are part of the story
 
     kinds = {e.kind for e in eventlog.read()}
     assert {"director.decided", "experiment.configured", "verdict.issued", "session.concluded"} <= kinds

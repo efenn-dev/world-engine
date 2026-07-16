@@ -21,6 +21,9 @@ class Backend(Protocol):
     """Protocol every reality backend implements."""
 
     name: str
+    #: integrator names this backend supports — flows into intent validation
+    #: and the Director's observation, so capabilities live with the truth
+    integrators: tuple[str, ...]
 
     def reset(self, world: World) -> list[Event]:
         """Events that restore the backend's slice to its initial conditions."""

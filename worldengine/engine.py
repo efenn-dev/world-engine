@@ -63,6 +63,7 @@ class Engine:
             observation = Observation(
                 round=round_no,
                 goal=self.goal,
+                available_integrators=list(self.backend.integrators),
                 configured=self.world.get(self.sim_entity, "sim_config"),
                 results=list(outcome.results),
                 notes=notes[-_NOTE_WINDOW:],
@@ -76,7 +77,7 @@ class Engine:
                 )
             )
             try:
-                validate_intent(intent, self.world, self.sim_entity)
+                validate_intent(intent, self.world, self.sim_entity, self.backend.integrators)
             except IntentError as exc:
                 notes.append(f"intent rejected: {exc}")
                 self.eventlog.append(
@@ -146,16 +147,12 @@ class Engine:
                 data={"experiment": experiment, "duration": duration},
             )
         )
-        samples: list[dict[str, float]] = []
+        samples: list[dict[str, object]] = []
         for event in self.backend.advance(self.world, duration):
             self._apply(event.model_copy(update={"data": {**event.data, "experiment": experiment}}))
+            # generic sample: t + every backend diagnostic except the state fold
             samples.append(
-                {
-                    "t": event.t,
-                    "theta": event.data["theta"],
-                    "omega": event.data["omega"],
-                    "energy": event.data["energy"],
-                }
+                {"t": event.t, **{k: v for k, v in event.data.items() if k != "set_components"}}
             )
         verdict = self.verifier.check(samples)
         self.eventlog.append(

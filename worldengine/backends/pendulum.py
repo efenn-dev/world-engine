@@ -67,6 +67,7 @@ class PendulumBackend:
     """
 
     name = "pendulum"
+    integrators: tuple[str, ...] = ("explicit_euler", "symplectic_euler", "rk4")
 
     def __init__(self, entity: int, sample_every: float = 0.1) -> None:
         self.entity = entity

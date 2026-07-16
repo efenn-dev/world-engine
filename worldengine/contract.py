@@ -11,7 +11,6 @@ from __future__ import annotations
 from .models import Intent
 from .world import World
 
-INTEGRATORS: tuple[str, ...] = ("explicit_euler", "symplectic_euler", "rk4")
 MAX_DT = 0.1
 MAX_DURATION = 300.0
 
@@ -20,20 +19,24 @@ class IntentError(ValueError):
     """An intent that violates the contract; the reason is fed back to the Director."""
 
 
-def validate_intent(intent: Intent, world: World, sim_entity: int) -> None:
+def validate_intent(
+    intent: Intent, world: World, sim_entity: int, integrators: tuple[str, ...]
+) -> None:
     """Raise `IntentError` if the intent violates the contract.
 
     Args:
         intent: the Director's proposal.
         world: current world state (validation may depend on it).
         sim_entity: the entity the experiment runs on.
+        integrators: integrator names the active backend supports (capabilities
+            are backend-owned, not hardcoded here).
     """
     if intent.action == "configure":
         integrator = intent.args.get("integrator")
         dt = intent.args.get("dt")
-        if integrator not in INTEGRATORS:
+        if integrator not in integrators:
             raise IntentError(
-                f"unknown integrator {integrator!r}; choose one of {list(INTEGRATORS)}"
+                f"unknown integrator {integrator!r}; choose one of {list(integrators)}"
             )
         if not isinstance(dt, (int, float)) or isinstance(dt, bool) or not 0 < float(dt) <= MAX_DT:
             raise IntentError(f"dt must be a number in (0, {MAX_DT}], got {dt!r}")

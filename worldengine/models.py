@@ -59,6 +59,9 @@ class Observation(BaseModel):
 
     round: int
     goal: str
+    #: integrators the active backend supports — capabilities come from the
+    #: world, not from the Director's prompt
+    available_integrators: list[str] = Field(default_factory=list)
     #: the currently configured experiment (None if nothing configured yet) —
     #: without this the Director can't tell "configured, awaiting run" from "blank"
     configured: dict[str, Any] | None = None
@@ -80,6 +83,7 @@ class Outcome(BaseModel):
     concluded: bool = False
     summary: str = ""
     results: list[ExperimentResult] = Field(default_factory=list)
-    #: per-experiment ground-truth samples (t, theta, omega, energy) for projectors
-    samples: dict[int, list[dict[str, float]]] = Field(default_factory=dict)
+    #: per-experiment ground-truth samples for projectors — scalar diagnostics
+    #: plus whatever state the backend reports (theta/omega, qpos/qvel, ...)
+    samples: dict[int, list[dict[str, Any]]] = Field(default_factory=dict)
     rounds: int = 0

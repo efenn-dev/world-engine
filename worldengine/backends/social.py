@@ -23,6 +23,7 @@ class SocialBackend:
     """Stub — implements the Backend protocol shape but raises on use."""
 
     name = "social"
+    integrators: tuple[str, ...] = ()
 
     def reset(self, world: World) -> list[Event]:
         """Not implemented in this slice."""
