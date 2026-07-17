@@ -175,6 +175,25 @@ def build_manifest(board: dict, clip_files: dict[int, Path], voice_dir: Path | N
     return manifest
 
 
+def render_clip_from_video(ffmpeg: str, source: Path, out_path: Path, duration: float) -> None:
+    """Animated clip -> exact-duration H.264 with silent audio.
+
+    Wan clips cap at ~5s; when the beat needs longer, the last frame is
+    held (tpad clone) so caption/sfx timing inside the clip stays valid.
+    """
+    command = [
+        ffmpeg, "-y", "-loglevel", "error",
+        "-i", str(source),
+        "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+        "-t", f"{duration:.3f}",
+        "-vf", "tpad=stop_mode=clone:stop_duration=600,format=yuv420p",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-c:a", "aac", "-movflags", "+faststart",
+        str(out_path),
+    ]
+    subprocess.run(command, check=True)
+
+
 def render_clip(ffmpeg: str, frame: Path, out_path: Path, duration: float) -> None:
     """Still frame -> H.264 mp4 with silent stereo audio (Editor-friendly)."""
     command = [
@@ -220,6 +239,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="dir of shot_NNN_line_II.wav dialogue audio (default: <board dir>/voice if present)",
     )
+    parser.add_argument(
+        "--animated",
+        type=Path,
+        default=None,
+        help="dir of animated shot_NNN.mp4 clips (default: <board dir>/animated if present); "
+        "shots with a clip use it, others fall back to the still frame",
+    )
     parser.add_argument("--out", type=Path, default=None, help="output dir (default: <board dir>/cliplab)")
     parser.add_argument("--force", action="store_true", help="re-encode clips that already exist")
     return parser
@@ -243,6 +269,11 @@ def main(argv: list[str] | None = None) -> int:
         voice_dir = args.board.parent / "voice"
     if voice_dir is not None:
         log.info("dialogue audio: %s", voice_dir)
+    animated_dir = args.animated
+    if animated_dir is None and (args.board.parent / "animated").is_dir():
+        animated_dir = args.board.parent / "animated"
+    if animated_dir is not None:
+        log.info("animated clips: %s", animated_dir)
 
     ffmpeg = find_ffmpeg()
     log.info("ffmpeg: %s", ffmpeg)
@@ -262,10 +293,16 @@ def main(argv: list[str] | None = None) -> int:
             clip_files[number] = clip_path
             continue
         duration = shot_duration(shot, voice_dir)
+        animated = animated_dir / f"shot_{number:03d}.mp4" if animated_dir else None
         try:
-            render_clip(ffmpeg, frame, clip_path, duration)
+            if animated is not None and animated.exists():
+                render_clip_from_video(ffmpeg, animated, clip_path, duration)
+                kind = "animated"
+            else:
+                render_clip(ffmpeg, frame, clip_path, duration)
+                kind = "still"
             clip_files[number] = clip_path
-            log.info("shot %d (%s): %.1fs -> %s", number, shot.get("beat"), duration, clip_path)
+            log.info("shot %d (%s, %s): %.1fs -> %s", number, shot.get("beat"), kind, duration, clip_path)
         except (OSError, subprocess.CalledProcessError) as exc:
             failures += 1
             log.error("shot %d: encode failed: %s", number, exc)
