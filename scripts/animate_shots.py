@@ -185,9 +185,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", type=Path, default=None, help="clip dir (default: <board dir>/animated)")
     parser.add_argument("--shots", default=None, help="subset like '5' or '1-4,6' (default: all)")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
-    parser.add_argument("--width", type=int, default=736, help="multiple of 32")
-    parser.add_argument("--height", type=int, default=416, help="multiple of 32")
-    parser.add_argument("--steps", type=int, default=20)
+    # 720p / 35 steps = Wan 2.2 5B's native quality band. ~11 min/shot warm on a
+    # 5070 Ti. For fast iteration drop to --width 736 --height 416 --steps 20
+    # (~3 min/shot, draft quality — noticeably softer and shimmerier).
+    parser.add_argument("--width", type=int, default=1280, help="multiple of 32 (Wan 5B native 1280)")
+    parser.add_argument("--height", type=int, default=704, help="multiple of 32 (Wan 5B native 704)")
+    parser.add_argument("--steps", type=int, default=35)
     parser.add_argument("--cfg", type=float, default=5.0)
     parser.add_argument("--seed", type=int, default=1234, help="base seed; shot N uses seed+N")
     parser.add_argument("--timeout", type=float, default=3600.0, help="per-shot generation timeout, seconds")
