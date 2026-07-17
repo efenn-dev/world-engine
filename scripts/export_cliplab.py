@@ -34,6 +34,12 @@ log = logging.getLogger("export_cliplab")
 
 MANIFEST_VERSION = 2  # SYNC: clipforge/src/utils/manifest.js MANIFEST_VERSION
 
+#: uniform CFR framerate for EVERY package clip. ClipLab's export re-cuts each
+#: clip from source and concats parts with -c copy; mixed framerates (Wan 24fps
+#: vs a still card) make the concat demuxer miscompute total duration and drop
+#: the tail. Pinning all clips to one CFR framerate keeps the concat exact.
+CLIP_FPS = 24
+
 #: seconds per beat kind before dialogue extension
 BEAT_BASE_SECONDS = {
     "establishing": 3.5,
@@ -186,7 +192,10 @@ def render_clip_from_video(ffmpeg: str, source: Path, out_path: Path, duration: 
         "-i", str(source),
         "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
         "-t", f"{duration:.3f}",
-        "-vf", "tpad=stop_mode=clone:stop_duration=600,format=yuv420p",
+        # tpad holds the last frame; -fps_mode cfr + -r makes every held frame a
+        # real, distinct-timestamp CFR frame so ClipLab's re-cut can't drop them
+        "-vf", f"tpad=stop_mode=clone:stop_duration=600,fps={CLIP_FPS},format=yuv420p",
+        "-fps_mode", "cfr", "-r", str(CLIP_FPS),
         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
         "-c:a", "aac", "-movflags", "+faststart",
         str(out_path),
@@ -195,14 +204,18 @@ def render_clip_from_video(ffmpeg: str, source: Path, out_path: Path, duration: 
 
 
 def render_clip(ffmpeg: str, frame: Path, out_path: Path, duration: float) -> None:
-    """Still frame -> H.264 mp4 with silent stereo audio (Editor-friendly)."""
+    """Still frame -> H.264 mp4 with silent stereo audio (Editor-friendly).
+
+    Same CFR framerate as animated clips (CLIP_FPS) so a mixed-clip timeline
+    concatenates without duration drift.
+    """
     command = [
         ffmpeg, "-y", "-loglevel", "error",
         "-loop", "1", "-i", str(frame),
         "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
         "-t", f"{duration:.3f}",
-        "-r", "30",
-        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
+        "-fps_mode", "cfr", "-r", str(CLIP_FPS),
+        "-vf", f"scale=trunc(iw/2)*2:trunc(ih/2)*2,fps={CLIP_FPS},format=yuv420p",
         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
         "-c:a", "aac", "-shortest",
         "-movflags", "+faststart",
