@@ -192,6 +192,23 @@ def render_clip(ffmpeg: str, frame: Path, out_path: Path, duration: float) -> No
     subprocess.run(command, check=True)
 
 
+def _localize_voice_audio(manifest: dict, out_dir: Path) -> None:
+    """Copy referenced voice WAVs into out_dir/voice and rewrite sfx paths.
+
+    Makes the export package self-contained: ClipLab's fs/media IPC only reads
+    inside allowed roots, so every file the manifest references must live with
+    the manifest (which the user places under an allowed root).
+    """
+    voice_out = out_dir / "voice"
+    for entry in manifest.get("sfx", []):
+        source = Path(entry["path"])
+        voice_out.mkdir(parents=True, exist_ok=True)
+        dest = voice_out / source.name
+        if source.resolve() != dest.resolve():
+            shutil.copyfile(source, dest)
+        entry["path"] = str(dest.resolve())
+
+
 def build_parser() -> argparse.ArgumentParser:
     """CLI for the ClipLab timeline export."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -254,6 +271,7 @@ def main(argv: list[str] | None = None) -> int:
             log.error("shot %d: encode failed: %s", number, exc)
 
     manifest = build_manifest(board, clip_files, voice_dir)
+    _localize_voice_audio(manifest, out_dir)
     manifest_path = out_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     total = sum(c["sourceDuration"] for c in manifest["clips"])
