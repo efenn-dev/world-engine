@@ -69,6 +69,18 @@ def chat_completion(
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+    # Identify this caller to an llm-router gateway. Without it every request
+    # arrives as the default urllib user-agent, indistinguishable from any
+    # other Python client — so the gateway cannot apply per-caller policy.
+    #
+    # That had a real cost: llm-router auto-triages exchanges for memory
+    # worthiness, and 25 entries of world_dream integrator chatter ("switched
+    # from symplectic_euler to explicit_euler") were written to durable memory
+    # as if they were durable facts. They could not be denied by name because
+    # this client had no name. Set WORLD_ENGINE_LLM_CALLER to give it one.
+    caller = os.environ.get("WORLD_ENGINE_LLM_CALLER", "").strip()
+    if caller:
+        headers["x-caller"] = caller
     request = urllib.request.Request(
         f"{base_url}/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
