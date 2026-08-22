@@ -81,6 +81,25 @@ def chat_completion(
     caller = os.environ.get("WORLD_ENGINE_LLM_CALLER", "").strip()
     if caller:
         headers["x-caller"] = caller
+    # Opt OUT of the gateway's kernel-memory injection by default.
+    #
+    # llm-router prepends recalled "durable facts" as a system message. Every LLM
+    # in this repo reasons over a typed, scoped view -- Observation for the
+    # Director, AgentView for a Mind -- and that view is supposed to be the whole
+    # of what it can see. Injected memory is an undeclared side channel around
+    # the contract, and it is not deterministic: the store is written
+    # continuously, so the same run can get different context hours apart.
+    #
+    # Measured 2026-08-22: recall fired at 0.66-0.70 on pendulum observations and
+    # returned the Director's OWN past conclusions ("Chose Symplectic Euler ...
+    # due to its known energy conservation properties") labelled as durable fact
+    # -- the answer to the benchmark, handed over before reasoning. An 8-vs-8 A/B
+    # showed no behaviour change on that decision, so this is a contract
+    # boundary being enforced, not a measured bug being patched.
+    #
+    # Set WORLD_ENGINE_LLM_MEMORY=1 to let memory back in.
+    if os.environ.get("WORLD_ENGINE_LLM_MEMORY", "0").strip() not in {"1", "true", "yes"}:
+        headers["x-memory"] = "0"
     request = urllib.request.Request(
         f"{base_url}/chat/completions",
         data=json.dumps(payload).encode("utf-8"),

@@ -147,3 +147,49 @@ class TestConfigureLivelockGuard:
         world = world_with({"integrator": "rk4", "dt": 0.01})
         with pytest.raises(IntentError, match="has no result yet"):
             validate_intent(configure("explicit_euler"), world, ENTITY, INTEGRATORS, results=[])
+
+
+class TestMemoryOptOut:
+    """The Director's view is the Observation; injected memory bypasses it."""
+
+    def _headers(self, monkeypatch, env: dict[str, str]) -> dict[str, str]:
+        import json as _json
+        import urllib.request
+
+        from worldengine import director as d
+
+        for k in ("WORLD_ENGINE_LLM_MEMORY", "WORLD_ENGINE_LLM_CALLER"):
+            monkeypatch.delenv(k, raising=False)
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+
+        captured: dict[str, dict[str, str]] = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return _json.dumps({"choices": [{"message": {"content": "{}"}}]}).encode()
+
+        def fake_urlopen(request, timeout=None):
+            captured["headers"] = {k.lower(): v for k, v in request.headers.items()}
+            return FakeResponse()
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        d.chat_completion("http://x/v1", "m", [{"role": "user", "content": "hi"}])
+        return captured["headers"]
+
+    def test_memory_is_disabled_by_default(self, monkeypatch) -> None:
+        assert self._headers(monkeypatch, {})["x-memory"] == "0"
+
+    def test_memory_can_be_re_enabled(self, monkeypatch) -> None:
+        assert "x-memory" not in self._headers(monkeypatch, {"WORLD_ENGINE_LLM_MEMORY": "1"})
+
+    def test_caller_header_still_works(self, monkeypatch) -> None:
+        h = self._headers(monkeypatch, {"WORLD_ENGINE_LLM_CALLER": "world-engine-director"})
+        assert h["x-caller"] == "world-engine-director"
+        assert h["x-memory"] == "0"

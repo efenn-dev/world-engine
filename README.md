@@ -120,6 +120,8 @@ configuration + the replay check held.
 | `WORLD_ENGINE_LLM_MODEL` | `auto` | model name passed through (router routes semantically) |
 | `WORLD_ENGINE_LLM_ROUTE` | — | optional llm-router force-pin (e.g. `local_reason`) |
 | `WORLD_ENGINE_LLM_KEY` | — | optional bearer token (local routing works keyless) |
+| `WORLD_ENGINE_LLM_CALLER` | — | identify this client to the gateway (`x-caller`) |
+| `WORLD_ENGINE_LLM_MEMORY` | `0` | `1` lets the gateway inject recalled memory. Off by default: the Director's view is the `Observation`, and injected memory is an undeclared side channel around the contract — and a drifting one, since the store is written continuously |
 
 CLI equivalents: `--llm-base`, `--llm-model`, `--llm-route`.
 
