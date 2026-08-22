@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from worldengine.backends.pendulum import PendulumBackend
+from worldengine.blinding import BlindedDirector
 from worldengine.director import PENDULUM_PLAN, LLMDirector, ScriptedDirector
 from worldengine.engine import Engine
 from worldengine.eventlog import EventLog
@@ -86,6 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--llm-base", default=None, help="OpenAI-compatible base URL (default: llm-router)")
     parser.add_argument("--llm-model", default=None, help="model name passed through to the gateway")
     parser.add_argument("--llm-route", default=None, help="llm-router force-pin route (e.g. local_reason)")
+    parser.add_argument(
+        "--blind",
+        action="store_true",
+        help="hide integrator NAMES from the Director (method_a/b/c) so the loop "
+             "is tested instead of physics recall - see worldengine.blinding",
+    )
+    parser.add_argument("--blind-seed", type=int, default=0, help="label permutation seed for --blind")
     return parser
 
 
@@ -104,6 +112,11 @@ def main(argv: list[str] | None = None) -> int:
         director = LLMDirector(base_url=args.llm_base, model=args.llm_model, route=args.llm_route)
     else:
         director = ScriptedDirector(run_duration=args.duration, plan=plan)
+
+    if args.blind:
+        # Perception-only transform: the world, the event log and the verifier
+        # keep real integrator names, so the run stays replayable and honest.
+        director = BlindedDirector(director, seed=args.blind_seed)
 
     engine = Engine(
         world=world,

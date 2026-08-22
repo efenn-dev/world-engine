@@ -36,6 +36,35 @@ settings that conserve energy. Explicit Euler pumps energy in (fails), a 10× sm
 step still fails (the drift is structural, not resolution), symplectic Euler passes —
 a real discovery arc judged entirely by the verifier, never by the LLM.
 
+### Recall is not discovery — use `--blind`
+
+That arc is the **scripted** Director's. An LLM Director short-circuits it: the
+options are named `explicit_euler`, `symplectic_euler` and `rk4`, and any competent
+model knows symplectic integrators conserve energy in Hamiltonian systems. Measured
+on Qwen3.5-4B, **8/8 samples configured `symplectic_euler` on round 0** with zero
+results in hand. The observe/decide/verify loop never ran. A benchmark whose labels
+give away the answer cannot tell you the loop works — or that it broke.
+
+`--blind` relabels the integrators to opaque tokens (`method_a/b/c`) for the
+Director only; the world, verifier and event log keep real names, so runs stay
+replayable. With priors removed the same model behaves the way the engine claims:
+
+| situation | pick | n |
+| --- | --- | --- |
+| round 0, nothing tried | a baseline | 8/8 |
+| one option failed twice | moves off it | 7/8 |
+| **two options failed** | **the remaining untried one** | **8/8** |
+| a different option failed | an untried one | 8/8 |
+
+The third row is the one that matters: positional habit ("try the next in the
+list") would have repeated an already-failed option. It does not. End to end,
+the blinded LLM Director configures a baseline, reads a 1629% drift failure from
+the verifier, switches, and passes — and it converges on `rk4`, a *second* valid
+answer the named benchmark never explores because the model always recites the
+one it already knows.
+
+Use `--blind` whenever you want to test the loop rather than the model's memory.
+
 ## Quickstart
 
 ```bash
@@ -44,6 +73,7 @@ pip install -r requirements.txt      # pydantic required; matplotlib optional (p
 
 python demos/pendulum_energy.py                  # scripted director, fully offline
 python demos/pendulum_energy.py --director llm   # decisions via llm-router (:4000)
+python demos/pendulum_energy.py --director llm --blind   # hide integrator NAMES: tests the loop, not recall
 python demos/pendulum_energy.py --backend mujoco # MuJoCo as ground truth (same engine)
 
 python demos/rendezvous.py                       # social backend: agents find each other

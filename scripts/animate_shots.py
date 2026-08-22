@@ -10,6 +10,12 @@ Per shot: upload frame -> queue a Wan 2.2 TI2V-5B workflow -> poll history ->
 download the generated frames -> assemble an H.264 clip with ffmpeg (24 fps).
 export_cliplab.py --animated then prefers these clips over still-encodes.
 
+Wan holds about 5s (121 frames) in a single pass, so shots longer than that are
+generated as a CHAIN: each pass after the first is anchored on the previous
+pass's final frame, and the duplicated anchor frame is dropped when stitching.
+Without this a long shot was silently truncated to 5s and the exporter froze
+the last frame for the remainder (render.py's tpad=stop_mode=clone).
+
 Requires sd-lab's ComfyUI running on :8188 with the Wan 2.2 5B weights in
 D:/sd-lab-models (diffusion_models/, text_encoders/, vae/).
 
@@ -41,7 +47,18 @@ log = logging.getLogger("animate_shots")
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8188"
 FPS = 24
-MAX_FRAMES = 121  # Wan 2.2 trains on 5s@24fps clips; longer degrades
+MAX_FRAMES = 121  # Wan 2.2 trains on 5s@24fps clips; one pass past this degrades
+
+#: Shots longer than MAX_FRAMES are generated as a CHAIN of passes: each pass
+#: after the first is anchored on the previous pass's final frame. That keeps
+#: every individual pass inside the band Wan was trained on (and inside 16GB of
+#: VRAM) while still filling the shot's real duration.
+#:
+#: The cost is drift: pass 2 onward anchors on a Wan-generated frame rather than
+#: the crisp SD key frame, so each link is a little softer than the last. Three
+#: passes (~15s) is the point where that stops being worth it -- past this the
+#: shot is truncated as before and the exporter holds the final frame.
+MAX_CHAIN_PASSES = 3
 
 NEGATIVE = (
     "blurry, distorted, deformed faces, extra limbs, text, watermark, subtitles, "
@@ -98,6 +115,75 @@ def frame_count(seconds: float) -> int:
     return max(4 * round((frames - 1) / 4) + 1, 9)
 
 
+def plan_passes(seconds: float) -> list[int]:
+    """Frame count for each generation pass needed to cover `seconds`.
+
+    A continuation pass re-renders its anchor as its own first frame, so it
+    contributes length-1 NEW frames to the finished clip; the caller drops that
+    duplicate when stitching. Returns [n] for anything that fits in one pass,
+    so short shots behave exactly as they did before chaining existed.
+    """
+    # The shortest legal pass is 9 frames, and a continuation pass spends one of
+    # them re-rendering its anchor -- so it can never add fewer than 8 frames.
+    # Chasing a gap smaller than that overshoots the shot instead of filling it;
+    # leave it to the exporter, which holds the final frame for the last <0.34s.
+    min_gain = 8
+
+    target = max(round(seconds * FPS), 9)
+    passes: list[int] = []
+    covered = 0
+    while covered < target and len(passes) < MAX_CHAIN_PASSES:
+        remaining = target - covered
+        if passes and remaining < min_gain:
+            break
+        # +1 on continuation passes to pay for the duplicated anchor frame
+        want = remaining if not passes else remaining + 1
+        length = frame_count(want / FPS)
+        passes.append(length)
+        covered += length if len(passes) == 1 else length - 1
+    return passes
+
+
+def generate_clip(
+    base_url: str, ffmpeg: str, key_frame: Path, prompt: str, seconds: float,
+    width: int, height: int, steps: int, cfg: float, seed: int, prefix: str,
+    timeout: float, out_path: Path,
+) -> tuple[int, int]:
+    """Generate one shot's clip, chaining passes when it exceeds MAX_FRAMES.
+
+    Returns (frames_written, passes_used).
+    """
+    passes = plan_passes(seconds)
+    anchor = key_frame
+    collected: list[Path] = []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_root = Path(tmp)
+        for i, length in enumerate(passes):
+            if i:
+                log.info("  pass %d/%d: %d frames, continuing from the previous frame",
+                         i + 1, len(passes), length)
+            image_name = upload_image(base_url, anchor)
+            workflow = build_workflow(image_name, prompt, width, height, length,
+                                      seed + i, steps, cfg, prefix=f"{prefix}_p{i}")
+            prompt_id = _post_json(base_url, "/prompt", {"prompt": workflow})["prompt_id"]
+            outputs = wait_for_prompt(base_url, prompt_id, timeout)
+
+            pass_dir = tmp_root / f"pass{i}"
+            pass_dir.mkdir()
+            frames = download_frames(base_url, outputs, pass_dir)
+            if len(frames) < length * 0.9:
+                raise RuntimeError(
+                    f"pass {i + 1}: expected ~{length} frames, got {len(frames)}")
+
+            # frames[0] of a continuation pass is a re-render of the anchor
+            collected.extend(frames if i == 0 else frames[1:])
+            anchor = frames[-1]
+
+        assemble(ffmpeg, collected, out_path)
+    return len(collected), len(passes)
+
+
 def motion_prompt(shot: dict, style: str) -> str:
     """Ground-truth action + camera as the motion guide; style keeps the look."""
     return (
@@ -133,10 +219,33 @@ def build_workflow(
 
 
 def wait_for_prompt(base_url: str, prompt_id: str, timeout: float) -> dict:
-    """Poll /history until the prompt completes; returns its outputs."""
+    """Poll /history until the prompt completes; returns its outputs.
+
+    Poll failures are survivable and must NOT abort the shot. While the sampler
+    is running, ComfyUI's HTTP thread can be starved long enough that /history
+    doesn't answer inside the socket timeout -- that says nothing about the
+    generation, which is happily proceeding on the GPU. Treat any transient
+    error as "not ready yet" and keep polling until the real `timeout` budget
+    is spent; only a hard error status from ComfyUI itself ends the wait early.
+    """
     start = time.monotonic()
+    consecutive_errors = 0
     while time.monotonic() - start < timeout:
-        history = _get(base_url, f"/history/{prompt_id}").get(prompt_id)
+        try:
+            # generous per-request timeout: a slow answer is still an answer
+            history = _get(base_url, f"/history/{prompt_id}", timeout=120.0).get(prompt_id)
+            consecutive_errors = 0
+        except Exception as exc:  # noqa: BLE001 -- any poll failure is transient
+            consecutive_errors += 1
+            log.debug("poll %d for %s failed (%s); still waiting",
+                      consecutive_errors, prompt_id, exc)
+            if consecutive_errors in (5, 20, 60):
+                log.warning("ComfyUI has not answered %d consecutive polls (%s) — "
+                            "still waiting, generation is probably still running",
+                            consecutive_errors, exc)
+            time.sleep(5)
+            continue
+
         if history:
             status = history.get("status", {})
             if status.get("status_str") == "error":
@@ -225,26 +334,27 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         seconds = shot_duration(shot)
-        length = frame_count(seconds)
+        passes = plan_passes(seconds)
+        covered = (passes[0] + sum(n - 1 for n in passes[1:])) / FPS
         prompt = motion_prompt(shot, board.get("style", ""))
-        log.info("shot %d (%s): %d frames (%.1fs of %.1fs) — generating...",
-                 number, shot.get("beat"), length, length / FPS, seconds)
+        detail = f"{len(passes)} passes" if len(passes) > 1 else "1 pass"
+        log.info("shot %d (%s): %d frames (%.1fs of %.1fs, %s) — generating...",
+                 number, shot.get("beat"), round(covered * FPS), covered, seconds, detail)
+        if covered < seconds - 0.1:
+            log.warning("shot %d: %.1fs of %.1fs — capped at %d passes; the exporter "
+                        "will hold the final frame for the remaining %.1fs",
+                        number, covered, seconds, MAX_CHAIN_PASSES, seconds - covered)
         start = time.monotonic()
         try:
-            image_name = upload_image(args.base_url, key_frame)
-            workflow = build_workflow(
-                image_name, prompt, args.width, args.height, length,
-                args.seed + number, args.steps, args.cfg, prefix=f"wan_shot_{number:03d}",
+            written, used = generate_clip(
+                args.base_url, ffmpeg, key_frame, prompt, seconds,
+                args.width, args.height, args.steps, args.cfg,
+                args.seed + number, f"wan_shot_{number:03d}", args.timeout, clip_path,
             )
-            prompt_id = _post_json(args.base_url, "/prompt", {"prompt": workflow})["prompt_id"]
-            outputs = wait_for_prompt(args.base_url, prompt_id, args.timeout)
-            with tempfile.TemporaryDirectory() as tmp:
-                frame_files = download_frames(args.base_url, outputs, Path(tmp))
-                if len(frame_files) < length * 0.9:
-                    raise RuntimeError(f"expected ~{length} frames, got {len(frame_files)}")
-                assemble(ffmpeg, frame_files, clip_path)
             done += 1
-            log.info("shot %d: %s (%.1f min)", number, clip_path, (time.monotonic() - start) / 60)
+            log.info("shot %d: %s (%d frames, %.1fs, %d pass(es), %.1f min)",
+                     number, clip_path, written, written / FPS, used,
+                     (time.monotonic() - start) / 60)
         except Exception as exc:  # noqa: BLE001 — per-shot isolation, report and continue
             failures += 1
             log.error("shot %d failed after %.1f min: %s", number, (time.monotonic() - start) / 60, exc)
