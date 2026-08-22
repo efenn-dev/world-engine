@@ -105,8 +105,13 @@ class TestIntentIsRestored:
         out = inner.decide(observation())
         assert out.args["integrator"] == "symplectic_euler"
 
-    def test_conclude_summary_is_restored(self) -> None:
-        """The event log must stay readable in real names."""
+    def test_conclude_summary_is_left_verbatim(self) -> None:
+        """Fidelity beats readability: never rewrite what the Director said.
+
+        A blinded Director confabulates physics about opaque tokens. Renaming
+        those tokens to real integrators in the log would disguise invented
+        reasoning as domain knowledge.
+        """
         wrapper = BlindedDirector(Spy(Intent(action="run", args={})))
         wrapper.decide(observation())
         label = wrapper.mapping["rk4"]
@@ -116,10 +121,9 @@ class TestIntentIsRestored:
         inner._to_blind = dict(wrapper.mapping)
         inner._to_real = {v: k for k, v in wrapper.mapping.items()}
         out = inner.decide(observation())
-        assert "rk4" in out.args["summary"]
-        assert "method_" not in out.args["summary"]
+        assert out.args["summary"] == f"{label} at dt=0.005 works"
 
-    def test_rationale_is_restored(self) -> None:
+    def test_rationale_is_left_verbatim(self) -> None:
         wrapper = BlindedDirector(Spy(Intent(action="run", args={})))
         wrapper.decide(observation())
         label = wrapper.mapping["explicit_euler"]
@@ -128,7 +132,16 @@ class TestIntentIsRestored:
         inner = BlindedDirector(spy)
         inner._to_blind = dict(wrapper.mapping)
         inner._to_real = {v: k for k, v in wrapper.mapping.items()}
-        assert "explicit_euler" in inner.decide(observation()).rationale
+        out = inner.decide(observation())
+        assert out.rationale == f"testing {label}"
+        assert "explicit_euler" not in out.rationale
+
+    def test_mapping_is_exposed_so_logs_can_be_decoded(self) -> None:
+        """Verbatim text is only defensible if the mapping is recoverable."""
+        wrapper = BlindedDirector(Spy(Intent(action="run", args={})))
+        wrapper.decide(observation())
+        assert set(wrapper.mapping) == set(REAL)
+        assert all(v.startswith("method_") for v in wrapper.mapping.values())
 
     def test_unknown_label_passes_through_untouched(self) -> None:
         """A hallucinated name must reach the validator, not be silently rewritten."""

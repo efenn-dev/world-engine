@@ -65,6 +65,23 @@ one it already knows.
 
 Use `--blind` whenever you want to test the loop rather than the model's memory.
 
+**What blinding found on MuJoCo** (4 integrators, weaker priors — a harder case):
+
+- *Named*, the model's priors are **actively wrong**. It opened with `implicit`
+  ("generally known for superior energy conservation compared to explicit methods
+  like Euler or RK4"), then `implicitfast` ("a higher-order symplectic method" —
+  simply false), burning two rounds before evidence took over and `rk4` passed.
+- *Blinded*, it **confabulates physics about meaningless tokens**: "method_c is a
+  symplectic integrator often used for Hamiltonian systems." Free text from a
+  blinded Director is therefore logged **verbatim** — an earlier version rewrote
+  labels back to real names, which disguised invented reasoning as domain
+  knowledge. Runs print the label mapping so the log stays decodable.
+- It also exposed a real hole in the contract: the Director could **reconfigure
+  forever without ever running**, learning nothing. One run burned seven straight
+  rounds alternating two `configure` intents. `validate_intent` now rejects a
+  reconfigure while an unrun experiment is pending, and that rejection becomes
+  feedback like any other — the same run then converged and concluded.
+
 ## Quickstart
 
 ```bash

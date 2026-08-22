@@ -23,7 +23,14 @@ behaviour the engine actually claims. The named benchmark simply cannot show it.
 Design. This wraps a *Director*, not a backend, so blinding is a perception
 transform and nothing else changes: the world, the event log and the verifier
 all keep using real integrator names, and a run stays replayable and honest.
-Only the text handed to the model is relabelled.
+
+Fidelity rule: only the *functional* field (``args.integrator``) is translated
+back. The Director's free text is recorded exactly as written, even though that
+leaves opaque labels in the log. Rewriting it would fabricate the record --
+blinded Directors confabulate physics about meaningless tokens ("method_x is a
+symplectic integrator suited to Hamiltonian systems"), and renaming that to a
+real integrator would disguise invented reasoning as domain knowledge. Runs
+print the mapping so the labels can be decoded.
 """
 
 from __future__ import annotations
@@ -61,9 +68,10 @@ class BlindedDirector:
     """Wrap a Director so it sees opaque integrator labels instead of real names.
 
     The Observation handed to the inner Director has its
-    ``available_integrators``, ``configured`` and ``results`` relabelled; the
-    Intent that comes back is translated straight back into real names before
-    the engine ever sees it.
+    ``available_integrators``, ``configured``, ``results`` and ``notes``
+    relabelled. On the way back only ``args.integrator`` is translated to a real
+    name, so the engine can act; the Director's free text is left verbatim (see
+    the module docstring's fidelity rule).
     """
 
     def __init__(self, inner: _Director, seed: int = 0) -> None:
@@ -105,16 +113,18 @@ class BlindedDirector:
 
         args = dict(intent.args or {})
         if "integrator" in args:
+            # Functional field: the engine needs a real name to act on.
             args["integrator"] = self._to_real.get(args["integrator"], args["integrator"])
-        # Free-text the Director writes (notably a conclude summary) can name the
-        # labels it was shown. Translate it back so the event log and every run
-        # artifact stay readable in real names -- nothing downstream of this
-        # wrapper should ever have to know blinding happened.
-        if isinstance(args.get("summary"), str):
-            args["summary"] = self._restore_text(args["summary"])
-        return intent.model_copy(
-            update={"args": args, "rationale": self._restore_text(intent.rationale or "")}
-        )
+
+        # Free text (rationale, conclude summary) is deliberately NOT rewritten.
+        # An earlier version translated labels back to real names inside it, and
+        # that fabricated the record: a blinded Director wrote "method_x is a
+        # symplectic integrator suited to Hamiltonian systems" -- a physics claim
+        # invented about an opaque token -- and the rewrite made the log read as
+        # though it had said "euler", i.e. as if confabulation were domain
+        # reasoning. The log must record what the Director actually said. Use
+        # `mapping` (also emitted in the run manifest) to decode.
+        return intent.model_copy(update={"args": args})
 
     def _relabel_text(self, text: str) -> str:
         # Longest-first so a name that is a prefix of another cannot corrupt it.
@@ -122,10 +132,6 @@ class BlindedDirector:
             text = text.replace(real, self._to_blind[real])
         return text
 
-    def _restore_text(self, text: str) -> str:
-        for blind in sorted(self._to_real, key=len, reverse=True):
-            text = text.replace(blind, self._to_real[blind])
-        return text
 
     @property
     def mapping(self) -> dict[str, str]:

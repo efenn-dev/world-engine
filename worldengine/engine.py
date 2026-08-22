@@ -77,7 +77,13 @@ class Engine:
                 )
             )
             try:
-                validate_intent(intent, self.world, self.sim_entity, self.backend.integrators)
+                validate_intent(
+                    intent,
+                    self.world,
+                    self.sim_entity,
+                    self.backend.integrators,
+                    results=outcome.results,
+                )
             except IntentError as exc:
                 notes.append(f"intent rejected: {exc}")
                 self.eventlog.append(

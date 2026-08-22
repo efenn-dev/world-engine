@@ -52,6 +52,22 @@ MUJOCO_PLAN = (
 )
 
 
+
+def blinding_note(backend, seed: int) -> str:
+    """Render the label mapping so a blinded run's log stays decodable.
+
+    Must derive from ``backend.integrators`` -- the same list the engine puts in
+    the Observation and therefore the same list BlindedDirector permutes. The
+    scripted plan is NOT a substitute: it names only the integrators that plan
+    happens to try (the MuJoCo plan omits ``implicit``), so a different set would
+    produce a different permutation and the note would be a lie.
+    """
+    from worldengine.blinding import blind_labels
+
+    mapping = blind_labels(list(backend.integrators), seed)
+    return ", ".join(f"{label}={real}" for real, label in mapping.items())
+
+
 def build_backend(backend_name: str, entity: int = 1):
     """Return (backend, seed components, scripted plan) for the chosen truth engine.
 
@@ -117,6 +133,9 @@ def main(argv: list[str] | None = None) -> int:
         # Perception-only transform: the world, the event log and the verifier
         # keep real integrator names, so the run stays replayable and honest.
         director = BlindedDirector(director, seed=args.blind_seed)
+        # The Director's free text is logged verbatim and will contain opaque
+        # labels, so the mapping has to be recoverable or the run is unreadable.
+        log.info("blinded labels: %s", blinding_note(backend, args.blind_seed))
 
     engine = Engine(
         world=world,
