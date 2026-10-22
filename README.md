@@ -208,3 +208,7 @@ tests/                      event log · backend physics · MuJoCo · social · 
    `scripts/export_cliplab.py` completes the chain: per-shot H.264 clips (beat-scaled
    durations) + a ClipForge **manifest v2** with dialogue as clip-anchored caption cues —
    verified against ClipLab's own validator; import it via the Editor's manifest flow.
+
+## License
+
+MIT. See [LICENSE](LICENSE). Copyright (c) 2026 Emmitt Fennessey.
